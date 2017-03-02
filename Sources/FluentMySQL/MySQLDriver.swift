@@ -6,18 +6,53 @@ public class MySQLDriver: Fluent.Driver {
     public var database: MySQL.Database
     
     /**
-        Tells the driver wether or not to make a new database
-        connection on every request.
-        Keep this off if you want session variables to be retained.
-        Setting it to `true` might cause timeout errors if there is no 
-        activity during an extended period of time (MySQL default is 8hr).
+     Stores retained connections per Thread
      */
-    public var retainConnection: Bool = false
+    private var _connections:[Thread:Connection] = [:]
     
     /**
-        The active connection with the database.
-    */
-    public var connection: Connection?
+     Tells the driver wether or not to make a new database
+     connection on every request.
+     Keep this off if you want session variables to be retained.
+     Setting it to `true` might cause timeout errors if there is no
+     activity during an extended period of time (MySQL default is 8hr).
+     */
+    public var retainConnection: Bool = false {
+        didSet {
+            if retainConnection == false {
+                _connections = [:]
+            }
+        }
+    }
+    
+    /**
+     The active connection with the database, thread based.
+     */
+    public var connection: Connection? {
+        set {
+            _connections[Thread.current] = newValue
+            retainConnection = true
+        }
+        get {
+            return _connections[Thread.current]
+        }
+    }
+    
+    
+    /**
+     Returns either the thread based connection (if retainConnection is true) or a temporary connection
+     */
+    private func resolvedConnection() throws -> Connection {
+        if retainConnection {
+            if let conn = self.connection {
+                return conn
+            }
+            let conn = try database.makeConnection()
+            self.connection = conn
+            return conn
+        }
+        return try database.makeConnection()
+    }
     
     /**
         Attempts to establish a connection to a MySQL database
@@ -81,7 +116,7 @@ public class MySQLDriver: Fluent.Driver {
         
         // create a reusable connection
         // so that LAST_INSERT_ID can be fetched
-        let connection = try database.makeConnection()
+        let connection = try self.resolvedConnection()
         
         let results = try mysql(statement, values, connection)
         
